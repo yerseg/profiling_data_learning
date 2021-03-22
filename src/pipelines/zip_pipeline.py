@@ -1,7 +1,11 @@
 import os
 import zipfile
 import argparse
+import pandas as pd
+from datetime import datetime as dt
 
+BROADCASTS_FILE_NAME = "broadcasts.data"
+POWER_EVENTS_FILE_NAME = "power.data"
 TMP_DIR_NAME = "tmp"
 
 
@@ -57,6 +61,86 @@ def merge_files(dst_folder, bins=1):
             merge_files_in_folder(os.path.join(os.path.abspath(dst_folder), user_data_dir, category_dir))
 
 
+def create_periods_file(data_folder):
+    df = pd.read_csv(os.path.join(os.path.abspath(data_folder), BROADCASTS_FILE_NAME), sep=';', index_col=False,
+                     header=None, low_memory=False, names=['timestamp', 'action', 'data', 'package', 'scheme', 'type'])
+
+    SCREEN_ON_EVENT = 'android.intent.action.SCREEN_ON'
+    SCREEN_OFF_EVENT = 'android.intent.action.SCREEN_OFF'
+
+    df['timestamp'] = df['timestamp'].apply(lambda x: dt.strptime(x, '%d.%m.%Y_%H:%M:%S.%f'))
+
+    df.index = pd.DatetimeIndex(df.timestamp)
+    df = df.sort_index()
+
+    power_events_df = df[df['action'].str.contains('|'.join(
+        [SCREEN_ON_EVENT,
+         SCREEN_OFF_EVENT]))]
+
+    power_events_df = power_events_df.append(
+        {
+            'timestamp': df.iloc[0][0],
+            'action': SCREEN_ON_EVENT,
+            'data': df.iloc[0][2]
+        }, ignore_index=True)
+
+    power_events_df.index = pd.DatetimeIndex(power_events_df.timestamp)
+    power_events_df = power_events_df.sort_index()
+
+    with open(os.path.join(os.path.abspath(data_folder), POWER_EVENTS_FILE_NAME), 'a') as f:
+        time_array = []
+        for i in range(len(power_events_df)):
+            action = power_events_df['action'].iloc[i]
+            timestamp = power_events_df['timestamp'].iloc[i]
+
+            if action == SCREEN_ON_EVENT:
+                on_time = timestamp
+            else:
+                time_array.append([on_time, timestamp])
+
+        for on, off in time_array:
+            if (off - on).total_seconds() <= 60 * 60:
+                f.write(str(on) + ';' + str(off) + '\n')
+
+
+def filter_logs(file_name):
+    df = pd.read_csv(file_name, sep=';', index_col=False,
+                     header=None, low_memory=False)
+
+    df = df.rename(columns={0: "timestamp"})
+
+    df['timestamp'] = df['timestamp'].apply(lambda x: dt.strptime(x, '%d.%m.%Y_%H:%M:%S.%f'))
+
+    df.index = pd.DatetimeIndex(df.timestamp)
+    df = df.sort_index()
+
+    df = df.drop(['timestamp'], axis=1)
+
+    time_array = []
+    with open(os.path.join(os.path.abspath(os.path.dirname(file_name)), POWER_EVENTS_FILE_NAME), 'r') as f:
+        lines = f.readlines()
+        for line in lines:
+            tmp = line.split(';')
+            time_array.append([tmp[0], tmp[1].replace('\n', '')])
+
+    df_parts = []
+    for on, off in time_array:
+        df_parts.append(df.loc[pd.Timestamp(on): pd.Timestamp(off)])
+
+    new_df = pd.concat(df_parts)
+    new_df.to_csv(file_name.replace(".data", "_filtered.data"), sep=';', header=False)
+
+
+def filter_logs_by_time(dst_folder):
+    for user_data_dir in os.listdir(os.path.abspath(dst_folder)):
+        create_periods_file(os.path.join(os.path.abspath(dst_folder), user_data_dir))
+        for category_dir in os.listdir(os.path.join(os.path.abspath(dst_folder), user_data_dir)):
+            if os.path.isfile(os.path.join(os.path.abspath(dst_folder), user_data_dir, category_dir)):
+                continue
+
+            filter_logs(os.path.join(os.path.abspath(dst_folder), user_data_dir, category_dir +".data"))
+
+
 def main():
     global TMP_DIR_NAME
     parser = argparse.ArgumentParser(description='Pipeline')
@@ -77,6 +161,7 @@ def main():
     user_data_folders = [os.path.join(src_folder, x) for x in os.listdir(src_folder)]
     process_user_data(user_data_folders, dst_folder)
     merge_files(dst_folder)
+    filter_logs_by_time(dst_folder)
 
     os.rmdir(TMP_DIR_NAME)
 
