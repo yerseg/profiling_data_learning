@@ -103,7 +103,7 @@ def create_periods_file(data_folder):
                 f.write(str(on) + ';' + str(off) + '\n')
 
 
-def filter_logs(file_name):
+def filter_logs(file_name, num, dst_folder):
     df = pd.read_csv(file_name, sep=';', index_col=False,
                      header=None, low_memory=False)
 
@@ -128,7 +128,8 @@ def filter_logs(file_name):
         df_parts.append(df.loc[pd.Timestamp(on): pd.Timestamp(off)])
 
     new_df = pd.concat(df_parts)
-    new_df.to_csv(file_name.replace(".data", "_filtered.data"), sep=';', header=False)
+    p = os.path.join(dst_folder, os.path.basename(file_name.replace(".data", "_filtered_" + num + ".data")))
+    new_df.to_csv(p, sep=';', header=False)
 
 
 def filter_logs_by_time(dst_folder):
@@ -138,7 +139,8 @@ def filter_logs_by_time(dst_folder):
             if os.path.isfile(os.path.join(os.path.abspath(dst_folder), user_data_dir, category_dir)):
                 continue
 
-            filter_logs(os.path.join(os.path.abspath(dst_folder), user_data_dir, category_dir +".data"))
+            filter_logs(os.path.join(os.path.abspath(dst_folder), user_data_dir, category_dir + ".data"),
+                        user_data_dir[-1:], dst_folder)
 
 
 def main():
