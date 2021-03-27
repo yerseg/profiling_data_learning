@@ -107,6 +107,8 @@ def filter_logs(file_name, num, dst_folder):
     df = pd.read_csv(file_name, sep=';', index_col=False,
                      header=None, low_memory=False)
 
+    print("Filter logs: ", file_name)
+
     df = df.rename(columns={0: "timestamp"})
 
     df['timestamp'] = df['timestamp'].apply(lambda x: dt.strptime(x, '%d.%m.%Y_%H:%M:%S.%f'))
@@ -135,12 +137,64 @@ def filter_logs(file_name, num, dst_folder):
 def filter_logs_by_time(dst_folder):
     for user_data_dir in os.listdir(os.path.abspath(dst_folder)):
         create_periods_file(os.path.join(os.path.abspath(dst_folder), user_data_dir))
-        for category_dir in os.listdir(os.path.join(os.path.abspath(dst_folder), user_data_dir)):
-            if os.path.isfile(os.path.join(os.path.abspath(dst_folder), user_data_dir, category_dir)):
-                continue
+        for file in os.listdir(os.path.join(os.path.abspath(dst_folder), user_data_dir)):
+            if os.path.isfile(os.path.join(os.path.abspath(dst_folder), user_data_dir, file)) and file != POWER_EVENTS_FILE_NAME:
+                filter_logs(os.path.join(os.path.abspath(dst_folder), user_data_dir, file), user_data_dir[-1:], dst_folder)
 
-            filter_logs(os.path.join(os.path.abspath(dst_folder), user_data_dir, category_dir + ".data"),
-                        user_data_dir[-1:], dst_folder)
+
+def bt_file_split(filepath):
+    with open(filepath, encoding='utf-8') as f:
+        lines = f.readlines()
+
+    dir = os.path.dirname(os.path.abspath(filepath))
+    new_file_path = os.path.join(dir, "_".join(["base", os.path.basename(filepath)]))
+    new_le_file_path = os.path.join(dir, "_".join(["le", os.path.basename(filepath)]))
+
+    with open(new_file_path, 'w+', encoding='utf-8') as f:
+        for line, i in zip(lines, range(len(lines))):
+            if line.find(';LE;') == -1:
+                f.write(line)
+
+    with open(new_le_file_path, 'w+', encoding='utf-8') as f:
+        for line, i in zip(lines, range(len(lines))):
+            if line.find(';LE;') != -1:
+                f.write(line)
+
+    os.remove(filepath)
+
+    return {'BASE': new_file_path, 'LE': new_le_file_path}
+
+
+def wifi_file_split(filepath):
+    with open(filepath, encoding='utf-8') as f:
+        lines = f.readlines()
+
+    dir = os.path.dirname(os.path.abspath(filepath))
+    new_file_path = os.path.join(dir, "_".join(["base", os.path.basename(filepath)]))
+    new_conn_file_path = os.path.join(dir, "_".join(["conn", os.path.basename(filepath)]))
+
+    with open(new_file_path, 'w+', encoding='utf-8') as f:
+        for line, i in zip(lines, range(len(lines))):
+            if line.find(';CONN;') == -1:
+                f.write(line)
+
+    with open(new_conn_file_path, 'w+', encoding='utf-8') as f:
+        for line, i in zip(lines, range(len(lines))):
+            if line.find(';CONN;') != -1:
+                f.write(line)
+
+    os.remove(filepath)
+
+    return {'BASE': new_file_path, 'CONN': new_conn_file_path}
+
+
+def split_files(dst_folder):
+    for user_data_dir in os.listdir(os.path.abspath(dst_folder)):
+        for file in os.listdir(os.path.join(os.path.abspath(dst_folder), user_data_dir)):
+            if os.path.isfile(os.path.join(os.path.abspath(dst_folder), user_data_dir, file)) and file.find('bt') != -1:
+                bt_file_split(os.path.join(os.path.abspath(dst_folder), user_data_dir, file))
+            elif os.path.isfile(os.path.join(os.path.abspath(dst_folder), user_data_dir, file)) and file.find('wifi') != -1:
+                wifi_file_split(os.path.join(os.path.abspath(dst_folder), user_data_dir, file))
 
 
 def main():
@@ -163,6 +217,7 @@ def main():
     user_data_folders = [os.path.join(src_folder, x) for x in os.listdir(src_folder)]
     process_user_data(user_data_folders, dst_folder)
     merge_files(dst_folder)
+    split_files(dst_folder)
     filter_logs_by_time(dst_folder)
 
     os.rmdir(TMP_DIR_NAME)
