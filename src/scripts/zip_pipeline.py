@@ -3,62 +3,11 @@ import zipfile
 import argparse
 import pandas as pd
 from datetime import datetime as dt
+import random as rnd
 
 BROADCASTS_FILE_NAME = "broadcasts.data"
 POWER_EVENTS_FILE_NAME = "power.data"
 TMP_DIR_NAME = "tmp"
-
-
-def unpack_zip_archives(path):
-    with zipfile.ZipFile(path, 'r') as zip_:
-        zip_.extractall(TMP_DIR_NAME)
-
-
-def generate_name(filename, i):
-    name_parts = filename.split('.')
-    category = name_parts[0]
-    name_parts[0] += '_' + str(i)
-    return category, ".".join(name_parts)
-
-
-def process_zips(path, dst_folder):
-    path = os.path.join(os.getcwd(), path)
-    for zip_file, i in zip(os.listdir(path), range(len(os.listdir(path)))):
-        unpack_zip_archives(os.path.join(path, zip_file))
-        for filename in os.listdir(TMP_DIR_NAME):
-            (category, file) = generate_name(filename, i)
-            dst_path = os.path.abspath(dst_folder)
-            if os.path.exists(os.path.join(dst_path, os.path.basename(path), category)) is False:
-                os.makedirs(os.path.join(dst_path, os.path.basename(path), category))
-            os.rename(os.path.join(TMP_DIR_NAME, filename),
-                      os.path.join(dst_path, os.path.basename(path), category, file))
-
-
-def process_user_data(user_data_path_list, dst_folder):
-    for path in user_data_path_list:
-        process_zips(path, dst_folder)
-
-
-def merge_files_in_folder(folder_path, bins=1):
-    try:
-        log = ''
-        out_file_name = ".".join([os.path.basename(folder_path), 'data'])
-        with open(os.path.join(folder_path, os.path.pardir, out_file_name), 'w+', encoding='utf-8') as out_file:
-            for file, i in zip(os.listdir(folder_path), range(len(os.listdir(folder_path)))):
-                if file != out_file_name:
-                    with open(os.path.join(folder_path, file), 'r', encoding='utf-8') as f:
-                        out_file.writelines(f.readlines())
-                    log += '...' + file
-    except Exception as ex:
-        print(ex)
-    finally:
-        print(log)
-
-
-def merge_files(dst_folder, bins=1):
-    for user_data_dir in os.listdir(os.path.abspath(dst_folder)):
-        for category_dir in os.listdir(os.path.join(os.path.abspath(dst_folder), user_data_dir)):
-            merge_files_in_folder(os.path.join(os.path.abspath(dst_folder), user_data_dir, category_dir))
 
 
 def create_periods_file(data_folder):
@@ -103,35 +52,7 @@ def create_periods_file(data_folder):
                 f.write(str(on) + ';' + str(off) + '\n')
 
 
-def filter_logs(file_name, num, dst_folder):
-    df = pd.read_csv(file_name, sep=';', index_col=False,
-                     header=None, low_memory=False)
 
-    print("Filter logs: ", file_name)
-
-    df = df.rename(columns={0: "timestamp"})
-
-    df['timestamp'] = df['timestamp'].apply(lambda x: dt.strptime(x, '%d.%m.%Y_%H:%M:%S.%f'))
-
-    df.index = pd.DatetimeIndex(df.timestamp)
-    df = df.sort_index()
-
-    df = df.drop(['timestamp'], axis=1)
-
-    time_array = []
-    with open(os.path.join(os.path.abspath(os.path.dirname(file_name)), POWER_EVENTS_FILE_NAME), 'r') as f:
-        lines = f.readlines()
-        for line in lines:
-            tmp = line.split(';')
-            time_array.append([tmp[0], tmp[1].replace('\n', '')])
-
-    df_parts = []
-    for on, off in time_array:
-        df_parts.append(df.loc[pd.Timestamp(on): pd.Timestamp(off)])
-
-    new_df = pd.concat(df_parts)
-    p = os.path.join(dst_folder, os.path.basename(file_name.replace(".data", "_filtered_" + num + ".data")))
-    new_df.to_csv(p, sep=';', header=False)
 
 
 def filter_logs_by_time(dst_folder):
@@ -197,17 +118,151 @@ def split_files(dst_folder):
                 wifi_file_split(os.path.join(os.path.abspath(dst_folder), user_data_dir, file))
 
 
+BASE_BT_NAME = 'base_bt'
+BASE_WIFI_NAME = 'base_wifi'
+BROADCASTS_NAME = 'broadcasts'
+CONN_WIFI_NAME = 'conn_wifi'
+LE_BT_NAME = 'le_bt'
+LOCATION_NAME = 'location'
+
+
+USERS_COUNT = 8
+TIME_RANGE = 10
+GEN_DF_COUNT = 10
+
+
+def make_common_dataframe(dst_folder, df_count, df_type):
+    dfs_list = []
+    dfs_rows_len_list = []
+    for i in range(1, df_count + 1):
+        path = os.path.join(dst_folder, "user_" + str(i))
+        df = pd.read_csv(os.path.join(path, df_type + ".data"), sep=';', header=None)
+        df['user'] = i
+        dfs_list.append(df)
+        dfs_rows_len_list.append(df.shape[0])
+
+    concat_list = []
+    for df in dfs_list:
+        concat_list.append(df)
+
+    df = pd.concat(concat_list, ignore_index=True)
+    return df
+
+
+def get_random_series_of_events(df, duration_min):
+    while True:
+        print(df.columns)
+        begin_index = rnd.randrange(len(df))
+        begin = df.iloc[begin_index]['timestamp']
+        end = begin + pd.Timedelta(duration_min, unit='min')
+        events = df[begin:end].copy()
+        if len(events) > 20:
+            break
+
+    return events
+
+
+def convert_timestamps(df_):
+    df = df_.copy()
+    df['delta'] = (df.timestamp.shift(-1) - df.timestamp).shift(1)
+
+    idx = df.index[df['user'].diff() != 0][-1]
+    df.at[df.index[idx], 'delta'] = pd.Timedelta(0)
+
+    time_array = []
+    current_timestamp = [df.timestamp[0]]
+
+    def add_value_to_array(x, time_array, current_timestamp):
+        delta = x
+        if pd.isnull(x):
+            delta = pd.Timedelta(0)
+
+        current_timestamp[0] += delta
+        time_array.append(current_timestamp[0])
+
+    _ = df.delta.apply(lambda x: add_value_to_array(x, time_array, current_timestamp))
+
+    df.timestamp = time_array
+    df = df.drop(['delta'], axis=1)
+
+    return df
+
+
+def events_flow_generator(df_dict, valid_user, duration):
+    new_events_dict = {}
+    while True:
+        intruder = rnd.randrange(1, USERS_COUNT + 1)
+        if intruder != valid_user:
+            break
+
+    for t, df in df_dict.items():
+        print(t)
+        valid_user_df = df[df.user == valid_user].copy()
+        intruder_df = df[df.user == intruder].copy()
+        valid_events = get_random_series_of_events(valid_user_df, duration)
+        intruder_events = get_random_series_of_events(intruder_df, duration)
+        flow_df = pd.concat([valid_events, intruder_events], ignore_index=True)
+        flow_df = convert_timestamps(flow_df)
+        new_d = {t: flow_df}
+        new_events_dict.update(new_d)
+
+    return new_events_dict
+
+
+def events_generator(dst_folder):
+    df_base_bt = make_common_dataframe(dst_folder, USERS_COUNT, BASE_BT_NAME)
+    df_base_wifi = make_common_dataframe(dst_folder, USERS_COUNT, BASE_WIFI_NAME)
+    df_broadcasts = make_common_dataframe(dst_folder, USERS_COUNT, BROADCASTS_NAME)
+    df_conn_wifi = make_common_dataframe(dst_folder, USERS_COUNT, CONN_WIFI_NAME)
+    df_le_bt = make_common_dataframe(dst_folder, USERS_COUNT, LE_BT_NAME)
+    df_location = make_common_dataframe(dst_folder, USERS_COUNT, LOCATION_NAME)
+
+    seed = int(rnd.SystemRandom().random() * 10000)
+    rnd.seed(a=seed)
+
+    df_dict = {
+        BASE_BT_NAME: df_base_bt,
+        BASE_WIFI_NAME: df_base_wifi,
+        BROADCASTS_NAME: df_broadcasts,
+        CONN_WIFI_NAME: df_conn_wifi,
+        LE_BT_NAME: df_le_bt,
+        LOCATION_NAME: df_location
+    }
+
+    tmp = {}
+    for key, df in df_dict.items():
+        print(key)
+        new_df = df.rename(columns={0: "timestamp"})
+        new_df.timestamp = new_df.timestamp.apply(lambda x: dt.strptime(x, '%Y-%m-%d %H:%M:%S.%f'))
+        new_df.index = pd.DatetimeIndex(new_df.timestamp)
+        new_df = new_df.sort_index()
+        tmp.update({key: new_df})
+
+    df_dict.update(tmp)
+
+    for i in range(1, USERS_COUNT + 1):
+        for j in range(GEN_DF_COUNT):
+            events_dict = events_flow_generator(df_dict, i, TIME_RANGE)
+            path = ".\\_events\\_generated\\valid_user_" + str(i)
+            os.makedirs(path, exist_ok=True)
+            for key, value in events_dict.items():
+                value.to_csv(os.path.join(path, key + "_" + str(j) + ".data"), sep=';', header=False, index=False)
+
+
 def main():
     global TMP_DIR_NAME
     parser = argparse.ArgumentParser(description='Pipeline')
 
     parser.add_argument("--data", default=None, type=str, help="Raw zip data folder")
     parser.add_argument("--folder", default=os.path.curdir, type=str, help="Destination folder")
+    parser.add_argument("--gen", action="store_true", help="Generate flow")
 
     args = parser.parse_args()
 
     src_folder = args.data
     dst_folder = args.folder
+
+    should_generate = args.gen
 
     if os.path.exists(os.path.join(os.getcwd(), TMP_DIR_NAME)) is False:
         os.mkdir(os.path.join(os.getcwd(), TMP_DIR_NAME))
@@ -215,10 +270,13 @@ def main():
     TMP_DIR_NAME = os.path.join(os.getcwd(), TMP_DIR_NAME)
 
     user_data_folders = [os.path.join(src_folder, x) for x in os.listdir(src_folder)]
-    process_user_data(user_data_folders, dst_folder)
-    merge_files(dst_folder)
+
+
+
     split_files(dst_folder)
-    filter_logs_by_time(dst_folder)
+    if should_generate:
+        events_generator(dst_folder)
+
 
     os.rmdir(TMP_DIR_NAME)
 
