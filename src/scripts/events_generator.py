@@ -1,7 +1,8 @@
 import pandas as pd
 import random as rnd
 import os
-from datetime import datetime as dt
+from datetime import datetime as dt, timedelta as td
+import argparse
 
 BASE_BT_NAME = 'base_bt'
 BASE_WIFI_NAME = 'base_wifi'
@@ -14,43 +15,31 @@ USERS_COUNT = 6
 TIME_RANGE = 10
 GEN_DF_COUNT = 10
 
+POWER_EVENTS_FILE_NAME = "power.data"
 
-def make_common_dataframe(df_count, df_type):
-    dfs_list = []
-    dfs_rows_len_list = []
-    for i in range(1, df_count + 1):
-        df = pd.read_csv(".\\_events\\" + df_type + "_filtered_" + str(i) + ".data", sep=';', header=None)
-        df['user'] = i
-        dfs_list.append(df)
-        dfs_rows_len_list.append(df.shape[0])
-
-    concat_list = []
-    for df in dfs_list:
-        concat_list.append(df)
-
-    df = pd.concat(concat_list, ignore_index=True)
-    return df
+SAMPLES_COUNT = 10
+DURATION = 15
 
 
-def get_random_series_of_events(df, duration_min):
-    while True:
-        print(df.columns)
-        begin_index = rnd.randrange(len(df))
-        begin = df.iloc[begin_index]['timestamp']
-        end = begin + pd.Timedelta(duration_min, unit='min')
-        events = df[begin:end].copy()
-        if len(events) > 20:
-            break
-
-    return events
+GENERATED_FLOW_NAME = "flow"
 
 
-def convert_timestamps(df_):
-    df = df_.copy()
+def convert_timestamp_for_file(file_path):
+    print("\tConvert: ", file_path)
+
+    with open(file_path, 'r') as f:
+        lines = f.readlines()
+
+    timestamps = [dt.strptime(x.split(';')[0], '%d.%m.%Y_%H:%M:%S.%f') for x in lines]
+    users = [int(x.split(';')[-1].replace('\n', '')) for x in lines]
+
+    df = pd.DataFrame({'timestamp' : timestamps, 'user' : users})
+    df.index = pd.DatetimeIndex(df.timestamp)
+
     df['delta'] = (df.timestamp.shift(-1) - df.timestamp).shift(1)
 
     idx = df.index[df['user'].diff() != 0][-1]
-    df.at[df.index[idx], 'delta'] = pd.Timedelta(0)
+    df.at[idx, 'delta'] = pd.Timedelta(0)
 
     time_array = []
     current_timestamp = [df.timestamp[0]]
@@ -68,69 +57,155 @@ def convert_timestamps(df_):
     df.timestamp = time_array
     df = df.drop(['delta'], axis=1)
 
-    return df
+    ts = [x.strftime('%d.%m.%Y_%H:%M:%S.%f') for x in df['timestamp']]
+    new_lines = []
+    for line, timestamp in zip(lines, ts):
+        new_line = line.split(';')
+        new_line[0] = timestamp
+        new_lines.append(';'.join(new_line))
+
+    with open(file_path, 'w') as of:
+        of.writelines(new_lines)
 
 
-def events_flow_generator(df_dict, valid_user, duration):
-    new_events_dict = {}
-    while True:
-        intruder = rnd.randrange(1, USERS_COUNT + 1)
-        if intruder != valid_user:
-            break
+def convert_timestamps(path):
+    for time_dir in os.listdir(path):
+        dir = os.path.join(path, time_dir)
+        for user_path in os.listdir(dir):
+            flow_path = os.path.join(dir, user_path, GENERATED_FLOW_NAME)
+            print("Convert timestamps: ", flow_path)
 
-    for t, df in df_dict.items():
-        print(t)
-        valid_user_df = df[df.user == valid_user].copy()
-        intruder_df = df[df.user == intruder].copy()
-        valid_events = get_random_series_of_events(valid_user_df, duration)
-        intruder_events = get_random_series_of_events(intruder_df, duration)
-        flow_df = pd.concat([valid_events, intruder_events], ignore_index=True)
-        flow_df = convert_timestamps(flow_df)
-        new_d = {t: flow_df}
-        new_events_dict.update(new_d)
-
-    return new_events_dict
+            for file in os.listdir(flow_path):
+                file_path = os.path.join(flow_path, file)
+                if os.path.isfile(file_path):
+                    convert_timestamp_for_file(file_path)
 
 
-def main():
-    df_base_bt = make_common_dataframe(USERS_COUNT, BASE_BT_NAME)
-    df_base_wifi = make_common_dataframe(USERS_COUNT, BASE_WIFI_NAME)
-    df_broadcasts = make_common_dataframe(USERS_COUNT, BROADCASTS_NAME)
-    df_conn_wifi = make_common_dataframe(USERS_COUNT, CONN_WIFI_NAME)
-    df_le_bt = make_common_dataframe(USERS_COUNT, LE_BT_NAME)
-    df_location = make_common_dataframe(USERS_COUNT, LOCATION_NAME)
+def merge_different_users_samples(path, samples_count):
+    for time_dir in os.listdir(path):
+        dir = os.path.join(path, time_dir)
+        for user_path in os.listdir(dir):
+            print("Merge samples for ", user_path)
 
+            src_user_path = os.path.join(dir, user_path)
+            out_user_path = os.path.join(src_user_path, GENERATED_FLOW_NAME)
+
+            if os.path.exists(out_user_path) is False:
+                os.makedirs(out_user_path)
+
+            data_files = []
+            for file in os.listdir(src_user_path):
+                file_path = os.path.join(src_user_path, file)
+                if os.path.isfile(file_path):
+                    data_files.append(file_path)
+
+            for file in data_files:
+                for other_user_path in os.listdir(dir):
+                    if other_user_path != user_path:
+                        other_path = os.path.join(dir, other_user_path)
+                        other_data_files = []
+                        for f in os.listdir(other_path):
+                            other_file_path = os.path.join(other_path, f)
+                            if os.path.isfile(other_file_path):
+                                other_data_files.append(other_file_path)
+
+                        for other_file in other_data_files:
+                            if os.path.basename(other_file).split('_')[0] == os.path.basename(file).split('_')[0]:
+                                print("\tFile: ", file)
+                                print("\tOther file: ", other_file)
+
+                                valid_user = os.path.basename(src_user_path).split('_')[1]
+                                intruder = os.path.basename(other_user_path).split('_')[1]
+
+                                with open(file, 'r') as ff:
+                                    valid_lines = ff.readlines()
+
+                                with open(other_file, 'r') as ff:
+                                    intruder_lines = ff.readlines()
+
+                                valid_lines = [x.replace('\n', ';' + valid_user) + '\n' for x in valid_lines]
+                                intruder_lines = [x.replace('\n', ';' + intruder) + '\n' for x in intruder_lines]
+
+                                base_name = os.path.basename(file).split('_')[0]
+                                index_1 = os.path.basename(file).split('_')[1].replace('.data', '')
+                                index_2 = os.path.basename(other_file).split('_')[1].replace('.data', '')
+                                file_name = '_'.join([base_name, index_1, index_2, intruder]) + ".data"
+                                with open(os.path.join(out_user_path, file_name), 'w') as of:
+                                    of.writelines(valid_lines)
+                                    of.writelines(intruder_lines)
+
+
+def generate_samples_for_each_user(src_path, dst_path, samples_count, duration):
     seed = int(rnd.SystemRandom().random() * 10000)
     rnd.seed(a=seed)
 
-    df_dict = {
-        BASE_BT_NAME: df_base_bt,
-        BASE_WIFI_NAME: df_base_wifi,
-        BROADCASTS_NAME: df_broadcasts,
-        CONN_WIFI_NAME: df_conn_wifi,
-        LE_BT_NAME: df_le_bt,
-        LOCATION_NAME: df_location
-    }
+    for user_data_dir in os.listdir(src_path):
+        print("Generate samples for ", user_data_dir)
 
-    tmp = {}
-    for key, df in df_dict.items():
-        print(key)
-        new_df = df.rename(columns={0: "timestamp"})
-        new_df.timestamp = new_df.timestamp.apply(lambda x: dt.strptime(x, '%Y-%m-%d %H:%M:%S.%f'))
-        new_df.index = pd.DatetimeIndex(new_df.timestamp)
-        new_df = new_df.sort_index()
-        tmp.update({key: new_df})
+        src_user_path = os.path.join(src_path, user_data_dir)
+        out_user_path = os.path.join(dst_path, user_data_dir)
 
-    df_dict.update(tmp)
+        if os.path.exists(out_user_path) is False:
+            os.makedirs(out_user_path)
 
-    for i in range(1, USERS_COUNT + 1):
-        for j in range(GEN_DF_COUNT):
-            events_dict = events_flow_generator(df_dict, i, TIME_RANGE)
-            path = ".\\_events\\_generated\\valid_user_" + str(i)
-            os.makedirs(path, exist_ok=True)
-            for key, value in events_dict.items():
-                value.to_csv(os.path.join(path, key + "_" + str(j) + ".data"), sep=';', header=False, index=False)
+        data_files = []
+        for file in os.listdir(src_user_path):
+            file_path = os.path.join(src_user_path, file)
+            if os.path.isfile(file_path) and file != POWER_EVENTS_FILE_NAME:
+                data_files.append(file_path)
 
+        for file in data_files:
+            print("\tFile: ", file)
+            df = pd.read_csv(file, sep='\n', index_col=False, header=None, low_memory=False)
+
+            df['timestamp'] = df[0].apply(lambda x: x.split(';')[0])
+            df['timestamp'] = df['timestamp'].apply(lambda x: dt.strptime(x, '%d.%m.%Y_%H:%M:%S.%f'))
+
+            df.index = pd.DatetimeIndex(df.timestamp)
+            df = df.sort_index()
+
+            df = df.drop(['timestamp'], axis=1)
+
+            for i in range(samples_count):
+                print("\t\tSample ", i)
+                chosen_file_name = data_files[rnd.randrange(len(data_files))]
+                with open(chosen_file_name) as f:
+                    lines = f.readlines()
+
+                index = rnd.randrange(len(lines) // 5, 4 * (len(lines) // 5))
+                begin_timestamp = dt.strptime(lines[index].split(';')[0], '%d.%m.%Y_%H:%M:%S.%f')
+                end_timestamp = begin_timestamp + td(minutes=duration)
+
+                sample = df[begin_timestamp : end_timestamp]
+
+                p = os.path.join(out_user_path, os.path.basename(file).replace(".data", "_" + str(i) + ".data"))
+                sample.to_csv(p, sep=';', header=False, index=False)
+
+                with open(p, 'r') as f:
+                    lines = f.readlines()
+
+                lines = [x[1:-2] + '\n' for x in lines]
+                with open(p, 'w') as f:
+                    f.writelines(lines)
+
+
+def generate_events(src_path, dst_path, samples_count, duration):
+    generate_samples_for_each_user(src_path, os.path.join(dst_path, str(duration) + "min"), samples_count, duration)
+
+
+def main():
+    parser = argparse.ArgumentParser(description='Events flow generator')
+
+    parser.add_argument("--src", default=None, type=str, help="Folder with data after filtering")
+    parser.add_argument("--dst", default=None, type=str, help="Destination folder")
+
+    args = parser.parse_args()
+    src_folder = args.src
+    dst_folder = args.dst
+
+    # generate_events(src_folder, dst_folder, SAMPLES_COUNT, DURATION)
+    # merge_different_users_samples(dst_folder, SAMPLES_COUNT)
+    convert_timestamps(dst_folder)
 
 if __name__ == '__main__':
     main()

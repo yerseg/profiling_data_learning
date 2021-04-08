@@ -3,13 +3,13 @@ import os
 import pandas as pd
 from datetime import datetime as dt
 
-
-BROADCASTS_FILE_NAME = "broadcasts.data"
+BROADCASTS_NAME = "broadcasts"
+BROADCASTS_FILE_NAME = "".join([BROADCASTS_NAME, ".data"])
 POWER_EVENTS_FILE_NAME = "power.data"
 
 
-def create_periods_file(data_folder):
-    df = pd.read_csv(os.path.join(os.path.abspath(data_folder), BROADCASTS_FILE_NAME), sep=';', index_col=False,
+def create_periods_file(src_folder, data_folder):
+    df = pd.read_csv(os.path.join(os.path.abspath(src_folder), BROADCASTS_FILE_NAME), sep=';', index_col=False,
                      header=None, low_memory=False, names=['timestamp', 'action', 'data', 'package', 'scheme', 'type'])
 
     SCREEN_ON_EVENT = 'android.intent.action.SCREEN_ON'
@@ -51,13 +51,12 @@ def create_periods_file(data_folder):
 
 
 def filter_logs(src_path, dst_path, file_name):
-    df = pd.read_csv(os.path.join(src_path, file_name), sep=';', index_col=False,
+    df = pd.read_csv(os.path.join(src_path, file_name), sep='\n', index_col=False,
                      header=None, low_memory=False)
 
-    print("Filter logs: ", file_name)
+    print("Filter logs: ", src_path, ' ', file_name)
 
-    df = df.rename(columns={0: "timestamp"})
-
+    df['timestamp'] = df[0].apply(lambda x: x.split(';')[0])
     df['timestamp'] = df['timestamp'].apply(lambda x: dt.strptime(x, '%d.%m.%Y_%H:%M:%S.%f'))
 
     df.index = pd.DatetimeIndex(df.timestamp)
@@ -78,19 +77,28 @@ def filter_logs(src_path, dst_path, file_name):
 
     new_df = pd.concat(df_parts)
     p = os.path.join(dst_path, file_name)
-    new_df.to_csv(p, sep=';', header=False)
+    new_df.to_csv(p, sep=';', header=False, index=False)
+
+    with open(p, 'r') as f:
+        lines = f.readlines()
+
+    lines = [x[1:-2] + '\n' for x in lines]
+    with open(p, 'w') as f:
+        f.writelines(lines)
 
 
 def filter_logs_by_time(src_folder, dst_folder):
     for user_data_dir in os.listdir(os.path.abspath(src_folder)):
-        path = os.path.join(os.path.abspath(dst_folder), user_data_dir)
-        if os.path.exists(path) is False:
-            os.makedirs(path)
+        src_path = os.path.join(os.path.abspath(src_folder), user_data_dir)
+        out_path = os.path.join(os.path.abspath(dst_folder), user_data_dir)
 
-        create_periods_file(path)
-        for file in os.listdir(os.path.join(os.path.abspath(src_folder), user_data_dir)):
-            if os.path.isfile(os.path.join(os.path.abspath(dst_folder), user_data_dir, file)) and file != POWER_EVENTS_FILE_NAME:
-                filter_logs(os.path.join(os.path.abspath(src_folder), user_data_dir), path, file)
+        if os.path.exists(out_path) is False:
+            os.makedirs(out_path)
+
+        create_periods_file(src_path, out_path)
+        for file in os.listdir(src_path):
+            if os.path.isfile(os.path.join(src_path, file)) and file != POWER_EVENTS_FILE_NAME:
+                filter_logs(src_path, out_path, file)
 
 
 def main():
