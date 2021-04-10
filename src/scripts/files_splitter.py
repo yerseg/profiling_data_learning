@@ -6,52 +6,37 @@ def bt_file_split(filepath):
     with open(filepath, encoding='utf-8') as f:
         lines = f.readlines()
 
-    dir = os.path.dirname(os.path.abspath(filepath))
-    new_file_path = os.path.join(dir, "_".join(["base", os.path.basename(filepath)]))
-    new_le_file_path = os.path.join(dir, "_".join(["le", os.path.basename(filepath)]))
+    le_lines = [x for x in lines if x.find(';LE;') != -1]
+    base_lines = [x for x in lines if x.find(';LE;') == -1]
 
-    with open(new_file_path, 'w+', encoding='utf-8') as f:
-        for line, i in zip(lines, range(len(lines))):
-            if line.find(';LE;') == -1:
-                f.write(line)
+    if len(os.path.basename(filepath).split('_')) == 1:
+        return "base_bt.data", "le_bt.data", base_lines, le_lines
 
-    with open(new_le_file_path, 'w+', encoding='utf-8') as f:
-        for line, i in zip(lines, range(len(lines))):
-            if line.find(';LE;') != -1:
-                f.write(line)
+    name_postfix = '_'.join(os.path.basename(filepath).split('_')[1:])
 
-    os.remove(filepath)
-
-    return {'BASE': new_file_path, 'LE': new_le_file_path}
+    return "base_bt_" + name_postfix, "le_bt_" + name_postfix, base_lines, le_lines
 
 
 def wifi_file_split(filepath):
     with open(filepath, encoding='utf-8') as f:
         lines = f.readlines()
 
-    dir = os.path.dirname(os.path.abspath(filepath))
-    new_file_path = os.path.join(dir, "_".join(["base", os.path.basename(filepath)]))
-    new_conn_file_path = os.path.join(dir, "_".join(["conn", os.path.basename(filepath)]))
+    conn_lines = [x for x in lines if x.find(';CONN;') != -1]
+    base_lines = [x for x in lines if x.find(';CONN;') == -1]
 
-    with open(new_file_path, 'w+', encoding='utf-8') as f:
-        for line, i in zip(lines, range(len(lines))):
-            if line.find(';CONN;') == -1:
-                f.write(line)
+    if len(os.path.basename(filepath).split('_')) == 1:
+        return "base_wifi.data", "conn_wifi.data", base_lines, conn_lines
 
-    with open(new_conn_file_path, 'w+', encoding='utf-8') as f:
-        for line, i in zip(lines, range(len(lines))):
-            if line.find(';CONN;') != -1:
-                f.write(line)
+    name_postfix = '_'.join(os.path.basename(filepath).split('_')[1:])
 
-    os.remove(filepath)
-
-    return {'BASE': new_file_path, 'CONN': new_conn_file_path}
+    return "base_wifi_" + name_postfix, "conn_wifi_" + name_postfix, base_lines, conn_lines
 
 
 def split_files(src, dst):
     for subdir, dirs, files in os.walk(src):
         for file in files:
             file_path = os.path.join(subdir, file)
+            print("Split file: ", file_path)
             if os.path.isfile(file_path) and file.find('bt') != -1:
                 name1, name2, lines1, lines2 = bt_file_split(file_path)
             elif os.path.isfile(file_path) and file.find('wifi') != -1:
@@ -63,10 +48,16 @@ def split_files(src, dst):
                     lines1 = f.readlines()
                 lines2 = ''
 
+            new_subdir = subdir.replace(src, dst)
+            if os.path.exists(new_subdir) is False:
+                os.makedirs(new_subdir)
 
+            with open(os.path.join(new_subdir, name1), 'w') as f:
+                f.writelines(lines1)
 
-
-
+            if name2 != '':
+                with open(os.path.join(new_subdir, name2), 'w') as f:
+                    f.writelines(lines2)
 
 
 def main():

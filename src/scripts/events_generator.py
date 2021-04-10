@@ -4,24 +4,12 @@ import os
 from datetime import datetime as dt, timedelta as td
 import argparse
 
-BASE_BT_NAME = 'base_bt'
-BASE_WIFI_NAME = 'base_wifi'
-BROADCASTS_NAME = 'broadcasts'
-CONN_WIFI_NAME = 'conn_wifi'
-LE_BT_NAME = 'le_bt'
-LOCATION_NAME = 'location'
-
-USERS_COUNT = 6
-TIME_RANGE = 10
-GEN_DF_COUNT = 10
 
 POWER_EVENTS_FILE_NAME = "power.data"
+GENERATED_FLOW_NAME = "flow"
 
 SAMPLES_COUNT = 10
 DURATION = 15
-
-
-GENERATED_FLOW_NAME = "flow"
 
 
 def convert_timestamp_for_file(file_path):
@@ -29,6 +17,9 @@ def convert_timestamp_for_file(file_path):
 
     with open(file_path, 'r') as f:
         lines = f.readlines()
+
+    if len(lines) == 0:
+        return
 
     timestamps = [dt.strptime(x.split(';')[0], '%d.%m.%Y_%H:%M:%S.%f') for x in lines]
     users = [int(x.split(';')[-1].replace('\n', '')) for x in lines]
@@ -203,8 +194,8 @@ def main():
     src_folder = args.src
     dst_folder = args.dst
 
-    # generate_events(src_folder, dst_folder, SAMPLES_COUNT, DURATION)
-    # merge_different_users_samples(dst_folder, SAMPLES_COUNT)
+    generate_events(src_folder, dst_folder, SAMPLES_COUNT, DURATION)
+    merge_different_users_samples(dst_folder, SAMPLES_COUNT)
     convert_timestamps(dst_folder)
 
 if __name__ == '__main__':
