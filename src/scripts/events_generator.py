@@ -4,7 +4,6 @@ import os
 from datetime import datetime as dt, timedelta as td
 import argparse
 
-
 POWER_EVENTS_FILE_NAME = "power.data"
 GENERATED_FLOW_NAME = "flow"
 
@@ -24,7 +23,7 @@ def convert_timestamp_for_file(file_path):
     timestamps = [dt.strptime(x.split(';')[0], '%d.%m.%Y_%H:%M:%S.%f') for x in lines]
     users = [int(x.split(';')[-1].replace('\n', '')) for x in lines]
 
-    df = pd.DataFrame({'timestamp' : timestamps, 'user' : users})
+    df = pd.DataFrame({'timestamp': timestamps, 'user': users})
     df.index = pd.DatetimeIndex(df.timestamp)
 
     df['delta'] = (df.timestamp.shift(-1) - df.timestamp).shift(1)
@@ -167,7 +166,7 @@ def generate_samples_for_each_user(src_path, dst_path, samples_count, duration):
                 begin_timestamp = dt.strptime(lines[index].split(';')[0], '%d.%m.%Y_%H:%M:%S.%f')
                 end_timestamp = begin_timestamp + td(minutes=duration)
 
-                sample = df[begin_timestamp : end_timestamp]
+                sample = df[begin_timestamp: end_timestamp]
 
                 p = os.path.join(out_user_path, os.path.basename(file).replace(".data", "_" + str(i) + ".data"))
                 sample.to_csv(p, sep=';', header=False, index=False)
@@ -197,6 +196,7 @@ def main():
     generate_events(src_folder, dst_folder, SAMPLES_COUNT, DURATION)
     merge_different_users_samples(dst_folder, SAMPLES_COUNT)
     convert_timestamps(dst_folder)
+
 
 if __name__ == '__main__':
     main()

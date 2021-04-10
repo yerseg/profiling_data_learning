@@ -1,30 +1,23 @@
-import os
-
 import pandas as pd
 import numpy as np
 from datetime import datetime as dt
 import scipy.stats as stats
-from geopy.distance import distance as geodist
 from scipy.spatial import distance
+from geopy.distance import distance as geodist
+import argparse
+import os
+
+POWER_EVENTS_FILE_NAME = "power.data"
 
 
-BASE_BT_NAME = 'base_bt'
-BASE_WIFI_NAME = 'base_wifi'
-BROADCASTS_NAME = 'broadcasts'
-CONN_WIFI_NAME = 'conn_wifi'
-LE_BT_NAME = 'le_bt'
-LOCATION_NAME = 'location'
+def generate_location_features(src_path, dst_path_rolling, dst_path_sampling, freq):
+    df = pd.read_csv(src_path, sep=';', index_col=False, header=None, low_memory=False,
+                     names=['timestamp', 'accuracy', 'altitude', 'latitude', 'longitude', 'user'])
 
-TIME_SAMPLE_FREQ = '30s'
+    if len(df) == 0:
+        return
 
-
-def location_generate_features(file, out_path):
-    print(file)
-
-    df = pd.read_csv(file, sep=';', index_col=False, header=None,
-                     low_memory=False, names=['timestamp', 'accuracy', 'altitude', 'latitude', 'longitude', 'user'])
-
-    df['timestamp'] = df['timestamp'].apply(lambda x: dt.strptime(x, '%Y-%m-%d %H:%M:%S.%f'))
+    df['timestamp'] = df['timestamp'].apply(lambda x: dt.strptime(x, '%d.%m.%Y_%H:%M:%S.%f'))
 
     df.index = pd.DatetimeIndex(df.timestamp)
     df = df.sort_index()
@@ -76,12 +69,7 @@ def location_generate_features(file, out_path):
     df['speed'] = df.apply(lambda row: get_speed(row), axis=1)
     df['altitude_speed'] = df.apply(lambda row: get_altitude_speed(row), axis=1)
 
-    df = df.drop(['prev_latitude', 'prev_longitude', 'prev_altitude'], axis=1)
-
-    df['prev_speed'] = df['speed'].shift(1)
-    df['prev_altitude_speed'] = df['altitude_speed'].shift(1)
-
-    df = df.drop(['prev_altitude_speed', 'prev_speed', 'timestamp', 'prev_timestamp'], axis=1)
+    df = df.drop(['prev_latitude', 'prev_longitude', 'prev_altitude', 'timestamp', 'prev_timestamp'], axis=1)
 
     def kurt(col):
         return stats.kurtosis(col)
@@ -102,13 +90,15 @@ def location_generate_features(file, out_path):
         'user': user_agg
     }
 
-    df_sampling = df.groupby(pd.Grouper(freq=TIME_SAMPLE_FREQ)).agg(agg_dict)
+    df_sampling = df.groupby(pd.Grouper(freq=freq)).agg(agg_dict)
 
-    df_sampling.columns = ["_".join([str(high_level_name), str(low_level_name)]) for (high_level_name, low_level_name) in df_sampling.columns.values]
+    df_sampling.columns = ["_".join([str(high_level_name), str(low_level_name)])
+                           for (high_level_name, low_level_name) in df_sampling.columns.values]
 
-    df_rolling = df.rolling(TIME_SAMPLE_FREQ, min_periods=1, center=False).agg(agg_dict)
+    df_rolling = df.rolling(freq, min_periods=1, center=False).agg(agg_dict)
 
-    df_rolling.columns = ["_".join([str(high_level_name), str(low_level_name)]) for (high_level_name, low_level_name) in df_rolling.columns.values]
+    df_rolling.columns = ["_".join([str(high_level_name), str(low_level_name)])
+                          for (high_level_name, low_level_name) in df_rolling.columns.values]
 
     df_sampling = df_sampling.dropna()
     df_sampling = df_sampling.fillna(0)
@@ -116,18 +106,18 @@ def location_generate_features(file, out_path):
     df_rolling = df_rolling.dropna()
     df_rolling = df_rolling.fillna(0)
 
-    if os.path.exists(out_path) is False:
-        os.makedirs(out_path)
-
-    df_sampling.to_csv(os.path.join(out_path, "location_sampling_ds_" + str(file[-6:])))
-    df_rolling.to_csv(os.path.join(out_path, "location_rolling_ds_" + str(file[-6:])))
+    df_sampling.to_csv(dst_path_sampling)
+    df_rolling.to_csv(dst_path_rolling)
 
 
-def wifi_generate_features(file, conn_file, out_path):
-    print(file, conn_file)
-    df = pd.read_csv(file, sep=';', index_col=False, header=None,
-                     low_memory=False, names=['timestamp', 'uuid', 'bssid', 'chwidth', 'freq', 'level', 'user'])
+def generate_wifi_features(src_path, src_path_conn, dst_path_rolling, dst_path_sampling, freq, window):
+    df = pd.read_csv(src_path, sep=';', index_col=False, header=None, low_memory=False,
+                     names=['timestamp', 'uuid', 'bssid', 'chwidth', 'freq', 'level', 'user'])
 
+    if len(df) == 0:
+        return
+
+    df['timestamp'] = df['timestamp'].apply(lambda x: dt.strptime(x, '%d.%m.%Y_%H:%M:%S.%f'))
     df.index = pd.DatetimeIndex(df.timestamp)
     df = df.sort_index()
 
@@ -135,6 +125,7 @@ def wifi_generate_features(file, conn_file, out_path):
     df['events_count'] = 1
 
     df = df.drop(['timestamp', 'chwidth'], axis=1)
+
     bssid_map = {bssid.replace(' ', ''): idx for bssid, idx in zip(df.bssid.unique(), range(len(df.bssid.unique())))}
 
     df.bssid = df.bssid.apply(lambda x: str(x).replace(' ', ''))
@@ -169,8 +160,7 @@ def wifi_generate_features(file, conn_file, out_path):
         return np.array2string(array, separator=',').replace(' ', '')[1:-1]
 
     all_func_dicts_quantum = {'freq': agg_string_join, 'level': agg_string_join, 'bssid_level': agg_bssid_col,
-                              'count': 'sum',
-                              'events_count': 'sum', 'user': user_agg}
+                              'count': 'sum', 'events_count': 'sum', 'user': user_agg}
 
     df_quantum = df.groupby(['timestamp', 'uuid'], as_index=True).agg(all_func_dicts_quantum)
 
@@ -179,24 +169,27 @@ def wifi_generate_features(file, conn_file, out_path):
 
     df_quantum = df_quantum[df_quantum['count'] != 0]
 
-    df_conn = pd.read_csv(conn_file, sep=';', index_col=False,
-                          header=None, low_memory=False, names=['timestamp', '1', 'bssid', '2', '3', '4', '5', 'level', '6'])
+    df_conn = pd.read_csv(src_path_conn, sep=';', index_col=False, header=None, low_memory=False,
+                          names=['timestamp', '1', 'bssid', '2', '3', '4', '5', 'level', '6'])
 
-    df_conn = df_conn.drop(df_conn.columns.difference(['bssid', 'timestamp', 'level']), axis=1)
-    df_conn.index = pd.DatetimeIndex(df_conn.timestamp)
-    df_conn = df_conn.sort_index()
+    if len(df_conn) != 0:
+        df_conn['timestamp'] = df_conn['timestamp'].apply(lambda x: dt.strptime(x, '%d.%m.%Y_%H:%M:%S.%f'))
+        df_conn.index = pd.DatetimeIndex(df_conn.timestamp)
+        df_conn = df_conn.sort_index()
 
-    def get_level_from_row(row):
-        bssid = df_conn.iloc[df_conn.index.get_loc(row.name, method='nearest')]['bssid']
-        if str(bssid) == 'nan' or str(bssid) == 'null' or str(bssid) == '':
-            return 0
+        def get_level_from_row(row):
+            bssid = df_conn.iloc[df_conn.index.get_loc(row.name, method='nearest')]['bssid']
+            if str(bssid) == 'nan' or str(bssid) == 'null' or str(bssid) == '':
+                return 0
 
-        level = df_conn.iloc[df_conn.index.get_loc(row.name, method='nearest')]['level']
-        time = dt.strptime(df_conn.iloc[df_conn.index.get_loc(row.name, method='nearest')]['timestamp'],
-                           '%Y-%m-%d %H:%M:%S.%f')
-        return level if abs((time - row.name).total_seconds()) <= 10 else 0
+            level = df_conn.iloc[df_conn.index.get_loc(row.name, method='nearest')]['level']
+            time = df_conn.iloc[df_conn.index.get_loc(row.name, method='nearest')]['timestamp']
+            return level if abs((time - row.name).total_seconds()) <= 10 else 0
 
-    # df_quantum['conn_level'] = df_quantum.apply(lambda row: get_level_from_row(row), axis = 1)
+        df_conn = df_conn.loc[~df_conn.index.duplicated(keep='first')]
+        df_quantum['conn_level'] = df_quantum.apply(lambda row: get_level_from_row(row), axis=1)
+    else:
+        df_quantum['conn_level'] = 0
 
     def string2array(string):
         try:
@@ -287,29 +280,27 @@ def wifi_generate_features(file, conn_file, out_path):
 
         return df
 
-    WINDOW_SIZE = 5
-
     occur_and_level_columns_map = [
-        ("bssid_level", "occured_nets_count", WINDOW_SIZE, get_occured_nets_count),
-        ("bssid_level", "disappeared_nets_count", WINDOW_SIZE, get_disappeared_nets_count),
-        ("bssid_level", "jaccard_index", WINDOW_SIZE, get_jaccard_index),
-        ("bssid_level", "occur_speed", WINDOW_SIZE, get_occur_speed),
-        ("bssid_level", "level_speed", WINDOW_SIZE, get_level_speed)
+        ("bssid_level", "occured_nets_count", window, get_occured_nets_count),
+        ("bssid_level", "disappeared_nets_count", window, get_disappeared_nets_count),
+        ("bssid_level", "jaccard_index", window, get_jaccard_index),
+        ("bssid_level", "occur_speed", window, get_occur_speed),
+        ("bssid_level", "level_speed", window, get_level_speed)
     ]
 
-    for (col, new_col, window, func) in occur_and_level_columns_map:
-        df_quantum = calc_single_cols_in_window(df_quantum, col, new_col, window, func)
+    for (col, new_col, wnd, func) in occur_and_level_columns_map:
+        df_quantum = calc_single_cols_in_window(df_quantum, col, new_col, wnd, func)
 
     def get_conn_level_speed(row, prev_col, curr_col):
         return row[curr_col] - row[prev_col]
 
     single_columns_map = [
-        #     ("conn_level", "conn_level_speed", WINDOW_SIZE, get_conn_level_speed),
-        ("count", "count_speed", WINDOW_SIZE, get_conn_level_speed)
+        ("conn_level", "conn_level_speed", window, get_conn_level_speed),
+        ("count", "count_speed", window, get_conn_level_speed)
     ]
 
-    for (col, new_col, window, func) in single_columns_map:
-        df_quantum = calc_single_cols_in_window(df_quantum, col, new_col, window, func)
+    for (col, new_col, wnd, func) in single_columns_map:
+        df_quantum = calc_single_cols_in_window(df_quantum, col, new_col, wnd, func)
 
     def agg_str(col):
         #     all_freq = col.str.cat(sep=',')
@@ -336,12 +327,6 @@ def wifi_generate_features(file, conn_file, out_path):
     def kurt(col):
         return stats.kurtosis(col)
 
-    def user_agg(col):
-        if (col == 1).all():
-            return 1
-        else:
-            return 0
-
     df_quantum['freq'] = df_quantum.apply(lambda row: str_mean(row['freq']), axis=1)
     df_quantum['level'] = df_quantum.apply(lambda row: str_mean(row['level']), axis=1)
 
@@ -352,22 +337,26 @@ def wifi_generate_features(file, conn_file, out_path):
         "jaccard_index",
         "occur_speed",
         "count_speed",
-        #     "conn_level_speed",
+        "conn_level_speed",
         "level_speed",
         "count_speed"
     ]
 
-    for i in range(1, WINDOW_SIZE + 1):
+    for i in range(1, window + 1):
         for name in names:
             cols_for_drop.append('_'.join([name, str(i)]))
 
     df_quantum = df_quantum.drop(['bssid_level', 'timestamp', 'uuid'], axis=1)
     df_quantum = df_quantum.drop(cols_for_drop, axis=1)
 
-    df_quantum.columns
+    def user_agg(col):
+        if (col == 1).all():
+            return 1
+        else:
+            return 0
 
-    common_cols = [x for x in df_quantum.columns[0:5] if x != 'user' and x != 'events_count']
-    speed_acc_cols = df_quantum.columns[5:]
+    common_cols = [x for x in df_quantum.columns[0:6] if x != 'user' and x != 'events_count']
+    speed_acc_cols = df_quantum.columns[6:]
 
     common_funcs_list = [mean, var, median, skew, kurt]
     special_funcs_list = [mean, pd.DataFrame.mad, skew]
@@ -383,14 +372,14 @@ def wifi_generate_features(file, conn_file, out_path):
 
     df_quantum[speed_acc_cols] = df_quantum[speed_acc_cols].apply(pd.to_numeric)
 
-    df_sampling = df_quantum.groupby(pd.Grouper(freq=TIME_SAMPLE_FREQ)).agg(agg_dict)
+    df_sampling = df_quantum.groupby(pd.Grouper(freq=freq)).agg(agg_dict)
 
-    df_rolling = df_quantum.rolling(TIME_SAMPLE_FREQ, min_periods=1, center=False).agg(agg_dict)
+    df_rolling = df_quantum.rolling(freq, min_periods=1, center=False).agg(agg_dict)
 
-    df_sampling.columns = ["_".join([str(high_level_name), str(low_level_name)]) \
+    df_sampling.columns = ["_".join([str(high_level_name), str(low_level_name)])
                            for (high_level_name, low_level_name) in df_sampling.columns.values]
 
-    df_rolling.columns = ["_".join([str(high_level_name), str(low_level_name)]) \
+    df_rolling.columns = ["_".join([str(high_level_name), str(low_level_name)])
                           for (high_level_name, low_level_name) in df_rolling.columns.values]
 
     df_sampling = df_sampling.dropna()
@@ -399,21 +388,20 @@ def wifi_generate_features(file, conn_file, out_path):
     df_rolling = df_rolling.dropna()
     df_rolling = df_rolling.fillna(0)
 
-    if os.path.exists(out_path) is False:
-        os.makedirs(out_path)
-
-    df_sampling.to_csv(os.path.join(out_path, "wifi_sampling_ds_" + str(file[-6:])))
-    df_rolling.to_csv(os.path.join(out_path, "wifi_rolling_ds_" + str(file[-6:])))
+    df_sampling.to_csv(dst_path_sampling)
+    df_rolling.to_csv(dst_path_rolling)
 
 
-def bt_generate_features(file, le_file, out_path):
-    print(file, le_file)
-    df = pd.read_csv(file, sep=';', index_col=False, header=None,
-                     low_memory=False, names=['timestamp', 'action', 'bssid', 'major_class', 'class', \
-                            'bond_state', 'type', 'user'])
+def generate_bt_features(src_path, src_path_le, dst_path_rolling, dst_path_sampling, freq, window):
+    df = pd.read_csv(src_path, sep=';', index_col=False, header=None, low_memory=False,
+                     names=['timestamp', 'action', 'bssid', 'major_class', 'class', 'bond_state', 'type', 'user'])
+
+    if len(df) == 0:
+        return
 
     df = df[df['action'] == 'android.bluetooth.device.action.FOUND']
 
+    df['timestamp'] = df['timestamp'].apply(lambda x: dt.strptime(x, '%d.%m.%Y_%H:%M:%S.%f'))
     df.index = pd.DatetimeIndex(df.timestamp)
     df = df.sort_index()
 
@@ -423,9 +411,15 @@ def bt_generate_features(file, le_file, out_path):
     df = df.drop(['timestamp', 'action', 'class', 'major_class', 'bond_state', 'type'], axis=1)
 
     bssid_map = {bssid.replace(' ', ''): idx for bssid, idx in zip(df.bssid.unique(), range(len(df.bssid.unique())))}
-    df.bssid = df.bssid.apply(lambda x: str(x).replace(' ', ''))
 
+    df.bssid = df.bssid.apply(lambda x: str(x).replace(' ', ''))
     df['count'] = 1
+
+    def user_agg(col):
+        if (col == VALID_USER).all():
+            return 1
+        else:
+            return 0
 
     def agg_string_join(col):
         col = col.apply(lambda x: str(x))
@@ -447,12 +441,6 @@ def bt_generate_features(file, le_file, out_path):
         if col.find('one_hot') != -1:
             one_hot_columns_count += 1
 
-    def user_agg(col):
-        if (col == VALID_USER).all():
-            return 1
-        else:
-            return 0
-
     cat_columns = df.columns[1:1 + one_hot_columns_count]
     cat_columns_map = {col: 'mean' for col in cat_columns}
 
@@ -466,31 +454,38 @@ def bt_generate_features(file, le_file, out_path):
 
     df_quantum = df_quantum.dropna()
 
-    df_le = pd.read_csv(le_file, sep=';', index_col=False, header=None,
-                        low_memory=False, names=['timestamp', '1', '2', '3', 'level', '3', 'connectable', '4'])
+    df_le = pd.read_csv(src_path_le, sep=';', index_col=False, header=None, low_memory=False,
+                        names=['timestamp', '1', '2', '3', 'level', '3', 'connectable', '4'])
 
-    df_le = df_le.drop(df_le.columns.difference(['connectable', 'timestamp', 'level']), axis=1)
-    df_le.index = pd.DatetimeIndex(df_le.timestamp)
-    df_le = df_le.sort_index()
+    if len(df_le) != 0:
+        df_le['timestamp'] = df_le['timestamp'].apply(lambda x: dt.strptime(x, '%d.%m.%Y_%H:%M:%S.%f'))
+        df_le = df_le.drop(df_le.columns.difference(['connectable', 'timestamp', 'level']), axis=1)
+        df_le.index = pd.DatetimeIndex(df_le.timestamp)
+        df_le = df_le.sort_index()
 
-    df_le['connectable'] = df_le['connectable'].apply(lambda x: 1 if str(x).lower() == 'true' else 0)
+        df_le['connectable'] = df_le['connectable'].apply(lambda x: 1 if str(x).lower() == 'true' else 0)
 
-    df_le = df_le.groupby(pd.Grouper(freq='5s'), as_index=True).agg({'level': 'mean', 'connectable': 'mean'})
+        df_le = df_le.groupby(pd.Grouper(freq='5s'), as_index=True).agg({'level': 'mean', 'connectable': 'mean'})
+        df_le = df_le.dropna()
 
-    df_le = df_le.dropna()
+        def get_le_conn_status_from_row(row):
+            conn = df_le.iloc[df_le.index.get_loc(row.name, method='nearest')]['connectable']
+            time = df_le.iloc[df_le.index.get_loc(row.name, method='nearest')].name
+            return conn if abs((time - row.name).total_seconds()) < 10 else 0
 
-    def get_le_conn_status_from_row(row):
-        conn = df_le.iloc[df_le.index.get_loc(row.name, method='nearest')]['connectable']
-        time = df_le.iloc[df_le.index.get_loc(row.name, method='nearest')].name
-        return conn if abs((time - row.name).total_seconds()) < 10 else 0
+        def get_le_level_from_row(row):
+            level = df_le.iloc[df_le.index.get_loc(row.name, method='nearest')]['level']
+            time = df_le.iloc[df_le.index.get_loc(row.name, method='nearest')].name
+            return level if abs((time - row.name).total_seconds()) < 10 else 0
 
-    def get_le_level_from_row(row):
-        level = df_le.iloc[df_le.index.get_loc(row.name, method='nearest')]['level']
-        time = df_le.iloc[df_le.index.get_loc(row.name, method='nearest')].name
-        return level if abs((time - row.name).total_seconds()) < 10 else 0
+        df_le = df_le.loc[~df_le.index.duplicated(keep='first')]
 
-    df_quantum['le_connectable'] = df_quantum.apply(lambda row: get_le_conn_status_from_row(row), axis=1)
-    df_quantum['le_level'] = df_quantum.apply(lambda row: get_le_level_from_row(row), axis=1)
+        df_quantum['le_connectable'] = df_quantum.apply(lambda row: get_le_conn_status_from_row(row), axis=1)
+        df_quantum['le_level'] = df_quantum.apply(lambda row: get_le_level_from_row(row), axis=1)
+
+    else:
+        df_quantum['le_connectable'] = 0
+        df_quantum['le_level'] = 0
 
     def string2array(string):
         try:
@@ -576,46 +571,29 @@ def bt_generate_features(file, le_file, out_path):
 
         return df
 
-    WINDOW_SIZE = 5
-
     occur_and_level_columns_map = [
-        ("bssid", "occured_devices_count", WINDOW_SIZE, get_occured_nets_count),
-        ("bssid", "disappeared_devices_count", WINDOW_SIZE, get_disappeared_nets_count),
-        ("bssid", "jaccard_index", WINDOW_SIZE, get_jaccard_index),
-        ("bssid", "occur_speed", WINDOW_SIZE, get_occur_speed)
+        ("bssid", "occured_devices_count", window, get_occured_nets_count),
+        ("bssid", "disappeared_devices_count", window, get_disappeared_nets_count),
+        ("bssid", "jaccard_index", window, get_jaccard_index),
+        ("bssid", "occur_speed", window, get_occur_speed)
     ]
 
-    for (col, new_col, window, func) in occur_and_level_columns_map:
-        df_quantum = calc_single_cols_in_window(df_quantum, col, new_col, window, func)
+    for (col, new_col, wnd, func) in occur_and_level_columns_map:
+        df_quantum = calc_single_cols_in_window(df_quantum, col, new_col, wnd, func)
 
     def get_conn_level_speed(row, prev_col, curr_col):
         return row[curr_col] - row[prev_col]
 
     single_columns_map = [
-        ("count", "count_speed", WINDOW_SIZE, get_conn_level_speed)
+        ("count", "count_speed", window, get_conn_level_speed)
     ]
 
-    for (col, new_col, window, func) in single_columns_map:
-        df_quantum = calc_single_cols_in_window(df_quantum, col, new_col, window, func)
+    for (col, new_col, wnd, func) in single_columns_map:
+        df_quantum = calc_single_cols_in_window(df_quantum, col, new_col, wnd, func)
 
     def agg_str(col):
         all_freq = col.str.cat(sep=',')
         return string2array(all_freq)
-
-    def str_mean(col):
-        return np.mean(agg_str(col))
-
-    def str_var(col):
-        return np.var(agg_str(col))
-
-    def str_median(col):
-        return np.median(agg_str(col))
-
-    def str_skew(col):
-        return stats.skew(agg_str(col))
-
-    def str_kurt(col):
-        return stats.kurtosis(agg_str(col))
 
     def mean(col):
         return np.mean(col)
@@ -641,7 +619,7 @@ def bt_generate_features(file, le_file, out_path):
         "count_speed"
     ]
 
-    for i in range(1, WINDOW_SIZE + 1):
+    for i in range(1, window + 1):
         for name in names:
             cols_for_drop.append('_'.join([name, str(i)]))
 
@@ -654,8 +632,8 @@ def bt_generate_features(file, le_file, out_path):
         else:
             return 0
 
-    common_cols = [x for x in df_quantum.columns[:one_hot_columns_count + 3] if x != 'user' and x != 'events_count']
-    speed_acc_cols = df_quantum.columns[one_hot_columns_count + 3:]
+    common_cols = [x for x in df_quantum.columns[:one_hot_columns_count + 5] if x != 'user' and x != 'events_count']
+    speed_acc_cols = df_quantum.columns[one_hot_columns_count + 5:]
 
     common_funcs_list = [mean, var, median, skew, kurt]
     special_funcs_list = [mean, pd.DataFrame.mad, skew]
@@ -671,14 +649,14 @@ def bt_generate_features(file, le_file, out_path):
 
     df_quantum[speed_acc_cols] = df_quantum[speed_acc_cols].apply(pd.to_numeric)
 
-    df_sampling = df_quantum.groupby(pd.Grouper(freq=TIME_SAMPLE_FREQ)).agg(agg_dict)
+    df_sampling = df_quantum.groupby(pd.Grouper(freq=freq)).agg(agg_dict)
 
-    df_rolling = df_quantum.rolling(TIME_SAMPLE_FREQ, min_periods=1, center=False).agg(agg_dict)
+    df_rolling = df_quantum.rolling(freq, min_periods=1, center=False).agg(agg_dict)
 
-    df_sampling.columns = ["_".join([str(high_level_name), str(low_level_name)]) \
+    df_sampling.columns = ["_".join([str(high_level_name), str(low_level_name)])
                            for (high_level_name, low_level_name) in df_sampling.columns.values]
 
-    df_rolling.columns = ["_".join([str(high_level_name), str(low_level_name)]) \
+    df_rolling.columns = ["_".join([str(high_level_name), str(low_level_name)])
                           for (high_level_name, low_level_name) in df_rolling.columns.values]
 
     df_sampling = df_sampling.dropna()
@@ -687,17 +665,16 @@ def bt_generate_features(file, le_file, out_path):
     df_rolling = df_rolling.dropna()
     df_rolling = df_rolling.fillna(0)
 
-    if os.path.exists(out_path) is False:
-        os.makedirs(out_path)
-
-    df_sampling.to_csv(os.path.join(out_path, "bt_sampling_ds_" + str(file[-6:])))
-    df_rolling.to_csv(os.path.join(out_path, "bt_rolling_ds_" + str(file[-6:])))
+    df_sampling.to_csv(dst_path_sampling)
+    df_rolling.to_csv(dst_path_rolling)
 
 
-def broadcasts_generate_features(file, out_path):
-    print(file)
-    df = pd.read_csv(file, sep=';', index_col=False, header=None,
+def generate_broadcast_features(src_path, dst_path_rolling, dst_path_sampling):
+    df = pd.read_csv(src_path, sep=';', index_col=False, header=None,
                      low_memory=False, names=['timestamp', 'action', 'data', 'package', 'scheme', 'type', 'user'])
+
+    if len(df) == 0:
+        return
 
     drop_actions = [
         'android.net.wifi.SCAN_RESULTS',
@@ -706,6 +683,8 @@ def broadcasts_generate_features(file, out_path):
         'android.bluetooth.adapter.action.DISCOVERY_FINISHED'
     ]
 
+    df['timestamp'] = df['timestamp'].apply(lambda x: dt.strptime(x, '%d.%m.%Y_%H:%M:%S.%f'))
+
     df = df[~df['action'].str.contains('|'.join(drop_actions))]
     df = df.drop(['data', 'package', 'scheme', 'type'], axis=1)
 
@@ -713,31 +692,90 @@ def broadcasts_generate_features(file, out_path):
     df = df.sort_index()
 
     df['events_count'] = 1
-
-    VALID_USER = df.iloc[0]['user']
+    VALID_USER = VALID_USER = df.iloc[0]['user']
     df['user'] = df['user'].apply(lambda x: 1 if x == VALID_USER else 0)
 
     df = df.drop(['timestamp'], axis=1)
 
-    df.to_csv(os.path.join(out_path, "broadcasts_ds_" + str(file[-6:])))
+    df.to_csv(dst_path_rolling)
+    df.to_csv(dst_path_sampling)
+
+
+def generate_features(src, dst, freq, window):
+    for time_dir in os.listdir(src):
+        dir = os.path.join(src, time_dir)
+        for user_path in os.listdir(dir):
+            src_user_path = os.path.join(dir, user_path, "flow")
+            out_user_sampling_path = os.path.join(dst, time_dir, "sampling", freq, user_path)
+            out_user_rolling_path = os.path.join(dst, time_dir, "rolling", freq, user_path)
+
+            if os.path.exists(out_user_sampling_path) is False:
+                os.makedirs(out_user_sampling_path)
+
+            if os.path.exists(out_user_rolling_path) is False:
+                os.makedirs(out_user_rolling_path)
+
+            print("Generate features for ", user_path)
+
+            for file in os.listdir(src_user_path):
+                if os.path.isfile(os.path.join(src_user_path, file)) and file.find(POWER_EVENTS_FILE_NAME) == -1:
+                    prefix = file[:-11]
+                    postfix = file[-11:]
+
+                    # # # # # # # # # # # #
+                    if postfix[1] == '0' and postfix[3] == '0':
+                    # # # # # # # # # # # #
+
+                        if prefix == "base_wifi":
+                            wifi_path = os.path.join(src_user_path, prefix + postfix)
+                            wifi_conn = os.path.join(src_user_path, "conn_wifi" + postfix)
+                            wifi_sampling_out = os.path.join(out_user_sampling_path, "wifi" + postfix + ".csv")
+                            wifi_rolling_out = os.path.join(out_user_rolling_path, "wifi" + postfix + ".csv")
+
+                            print("\tGenerate WIFI: ", wifi_path)
+                            generate_wifi_features(wifi_path, wifi_conn, wifi_rolling_out, wifi_sampling_out, freq, window)
+
+                        if prefix == "base_bt":
+                            bt_path = os.path.join(src_user_path, prefix + postfix)
+                            bt_le = os.path.join(src_user_path, "le_bt" + postfix)
+                            bt_sampling_out = os.path.join(out_user_sampling_path, "bt" + postfix + ".csv")
+                            bt_rolling_out = os.path.join(out_user_rolling_path, "bt" + postfix + ".csv")
+
+                            print("\tGenerate BT: ", bt_path)
+                            generate_bt_features(bt_path, bt_le, bt_rolling_out, bt_sampling_out, freq, window)
+
+                        if prefix == "broadcasts":
+                            broadcasts_path = os.path.join(src_user_path, prefix + postfix)
+                            broadcasts_sampling_out = os.path.join(out_user_sampling_path, "broadcasts" + postfix + ".csv")
+                            broadcasts_rolling_out = os.path.join(out_user_rolling_path, "broadcasts" + postfix + ".csv")
+
+                            print("\tGenerate BROADCASTS: ", broadcasts_path)
+                            generate_broadcast_features(broadcasts_path, broadcasts_rolling_out, broadcasts_sampling_out)
+
+                        if prefix == "location":
+                            location_path = os.path.join(src_user_path, prefix + postfix)
+                            location_sampling_out = os.path.join(out_user_sampling_path, "location" + postfix + ".csv")
+                            location_rolling_out = os.path.join(out_user_rolling_path, "location" + postfix + ".csv")
+
+                            print("\tGenerate LOCATION: ", location_path)
+                            generate_location_features(location_path, location_rolling_out, location_sampling_out, freq)
 
 
 def main():
-    base_path = ".\\_events\\_generated"
-    for user_dir in os.listdir(base_path):
-        u_dir = os.path.join(base_path, user_dir)
-        count = 0
-        for f in os.listdir(u_dir):
-            if int(f[-6]) > count:
-                count = int(f[-6])
+    parser = argparse.ArgumentParser(description='Features generator for events')
 
-        for i in range(count):
-            new_path = os.path.join(u_dir, TIME_SAMPLE_FREQ)
-            location_generate_features(os.path.join(u_dir, LOCATION_NAME + '_' + str(i) + ".data"), new_path)
-            wifi_generate_features(os.path.join(u_dir, BASE_WIFI_NAME + '_' + str(i) + ".data"), os.path.join(u_dir, CONN_WIFI_NAME + '_' + str(i) + ".data"), new_path)
-            bt_generate_features(os.path.join(u_dir, BASE_BT_NAME + '_' + str(i) + ".data"),
-                                   os.path.join(u_dir, LE_BT_NAME + '_' + str(i) + ".data"), new_path)
-            broadcasts_generate_features(os.path.join(u_dir, BROADCASTS_NAME + '_' + str(i) + ".data"), new_path)
+    parser.add_argument("--src", default=None, type=str, help="Folder with data")
+    parser.add_argument("--dst", default=None, type=str, help="Destination folder")
+    parser.add_argument("--wnd", default=None, type=str, help="Window size")
+
+    args = parser.parse_args()
+    src_folder = args.src
+    dst_folder = args.dst
+    freq = args.wnd
+
+    OTHER_WINDOW_SIZE = 3
+
+    generate_features(src_folder, dst_folder, freq, OTHER_WINDOW_SIZE)
 
 
 if __name__ == '__main__':
