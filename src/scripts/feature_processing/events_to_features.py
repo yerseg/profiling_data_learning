@@ -780,3 +780,58 @@ def main():
 
 if __name__ == '__main__':
     main()
+
+
+def generate_test_dataset(df_list, user, ex_user):
+    test_df = pd.concat(df_list)
+
+    valid_user_in_test_count = test_df[test_df.labels == user].shape[0]
+    ex_user_in_test_count = test_df[test_df.labels == ex_user].shape[0]
+    others_in_test_count = [test_df[test_df.labels == x].shape[0] \
+                            for x in test_df.labels.unique() if x != user and x != ex_user]
+
+    min_others_test_count = min(others_in_test_count)
+
+    is_important_min = True
+    if min_others_test_count <= ex_user_in_test_count and min_others_test_count <= valid_user_in_test_count:
+        is_important_min = False
+
+    new_df_parts = []
+    if is_important_min is True:
+        part_size = min(valid_user_in_test_count, ex_user_in_test_count)
+        other_sample_size = part_size // len(others_in_test_count) + 1
+    else:
+        part_size_can_be = min_others_test_count * len(others_in_test_count)
+
+        if part_size_can_be > min(valid_user_in_test_count, ex_user_in_test_count):
+            part_size = min(valid_user_in_test_count, ex_user_in_test_count)
+            other_sample_size = part_size // len(others_in_test_count) + 1
+        else:
+            part_size = part_size_can_be
+            other_sample_size = min_others_test_count
+
+
+    new_df_parts.append(test_df[test_df.labels == user].sample(part_size).copy())
+    new_df_parts.append(test_df[test_df.labels == ex_user].sample(part_size).copy())
+
+    for x in test_df.labels.unique():
+        if x != user and x != ex_user:
+            new_df_parts.append(test_df[test_df.labels == x].sample(other_sample_size).copy())
+
+    test_df = pd.concat(new_df_parts)
+
+    test_df.loc[test_df.labels != user, "user"] = 0
+    test_df.loc[test_df.labels == user, "user"] = 1
+
+    print("True: ", test_df[test_df.user == 1].shape)
+    print("Shape: ", test_df.shape)
+    for x in test_df.labels.unique():
+        print("Count ", x, ": ", test_df[test_df.labels == x].shape)
+
+    test_df = test_df.drop("labels", axis=1)
+
+    test_dataset = test_df.to_numpy().copy()
+    X_test = test_dataset[:, :-1].copy()
+    y_test = test_dataset[:, -1].copy()
+
+    return X_test, y_test

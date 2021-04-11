@@ -7,7 +7,6 @@ from geopy.distance import distance as geodist
 import argparse
 import os
 
-
 POWER_EVENTS_FILE_NAME = "power.data"
 
 
@@ -20,10 +19,10 @@ def generate_location_features(src_path, dst_path_rolling, dst_path_sampling, fr
     df.index = pd.DatetimeIndex(df.timestamp)
     df = df.sort_index()
 
-    df['accuracy'] = df['accuracy'].apply(lambda x: x.replace(',', '.'))
-    df['altitude'] = df['altitude'].apply(lambda x: x.replace(',', '.'))
-    df['latitude'] = df['latitude'].apply(lambda x: x.replace(',', '.'))
-    df['longitude'] = df['longitude'].apply(lambda x: x.replace(',', '.'))
+    df['accuracy'] = df['accuracy'].apply(lambda x: str(x).replace(',', '.'))
+    df['altitude'] = df['altitude'].apply(lambda x: str(x).replace(',', '.'))
+    df['latitude'] = df['latitude'].apply(lambda x: str(x).replace(',', '.'))
+    df['longitude'] = df['longitude'].apply(lambda x: str(x).replace(',', '.'))
 
     df['accuracy'] = df['accuracy'].astype(float)
     df['altitude'] = df['altitude'].astype(float)
@@ -356,7 +355,8 @@ def generate_wifi_features(src_path, src_path_conn, dst_path_rolling, dst_path_s
 
 def generate_bt_features(src_path, src_path_le, dst_path_rolling, dst_path_sampling, freq, window):
     df = pd.read_csv(src_path, sep=';', index_col=False, header=None,
-                     low_memory=False, names=['timestamp', 'action', 'bssid', 'major_class', 'class', 'bond_state', 'type'])
+                     low_memory=False,
+                     names=['timestamp', 'action', 'bssid', 'major_class', 'class', 'bond_state', 'type'])
 
     df = df[df['action'] == 'android.bluetooth.device.action.FOUND']
 
