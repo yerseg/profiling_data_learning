@@ -634,6 +634,8 @@ def generate_features(src, dst, freq, window):
     for user_data_dir in os.listdir(src):
         print("Generate features for ", user_data_dir)
 
+        # if user_data_dir not in ['user_1', 'user_2', 'user_3']:
+
         src_user_path = os.path.join(src, user_data_dir)
         out_user_sampling_path = os.path.join(dst, "sampling", freq, user_data_dir)
         out_user_rolling_path = os.path.join(dst, "rolling", freq, user_data_dir)
@@ -694,5 +696,3 @@ def main():
 
 if __name__ == '__main__':
     main()
-
-
