@@ -25,10 +25,10 @@ def generate_location_features(src_path, dst_path_rolling, dst_path_sampling, fr
     VALID_USER = df.iloc[0]['user']
     df['events_count'] = 1
 
-    df['accuracy'] = df['accuracy'].apply(lambda x: x.replace(',', '.'))
-    df['altitude'] = df['altitude'].apply(lambda x: x.replace(',', '.'))
-    df['latitude'] = df['latitude'].apply(lambda x: x.replace(',', '.'))
-    df['longitude'] = df['longitude'].apply(lambda x: x.replace(',', '.'))
+    df['accuracy'] = df['accuracy'].apply(lambda x: str(x).replace(',', '.'))
+    df['altitude'] = df['altitude'].apply(lambda x: str(x).replace(',', '.'))
+    df['latitude'] = df['latitude'].apply(lambda x: str(x).replace(',', '.'))
+    df['longitude'] = df['longitude'].apply(lambda x: str(x).replace(',', '.'))
 
     df['accuracy'] = df['accuracy'].astype(float)
     df['altitude'] = df['altitude'].astype(float)
@@ -705,6 +705,10 @@ def generate_features(src, dst, freq, window):
     for time_dir in os.listdir(src):
         dir = os.path.join(src, time_dir)
         for user_path in os.listdir(dir):
+
+            if user_path in ['user_1', 'user_2', 'user_3', 'user_4']:
+                continue
+
             src_user_path = os.path.join(dir, user_path, "flow")
             out_user_sampling_path = os.path.join(dst, time_dir, "sampling", freq, user_path)
             out_user_rolling_path = os.path.join(dst, time_dir, "rolling", freq, user_path)
@@ -725,6 +729,9 @@ def generate_features(src, dst, freq, window):
                     # # # # # # # # # # # #
                     # if postfix[1] == '0' and postfix[3] == '0':
                     # # # # # # # # # # # #
+
+                    if prefix != "location" and user_path == 'user_5':
+                        continue
 
                     if prefix == "base_wifi":
                         wifi_path = os.path.join(src_user_path, prefix + postfix)
