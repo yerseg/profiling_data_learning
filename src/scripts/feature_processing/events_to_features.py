@@ -669,38 +669,6 @@ def generate_bt_features(src_path, src_path_le, dst_path_rolling, dst_path_sampl
     df_rolling.to_csv(dst_path_rolling)
 
 
-def generate_broadcast_features(src_path, dst_path_rolling, dst_path_sampling):
-    df = pd.read_csv(src_path, sep=';', index_col=False, header=None,
-                     low_memory=False, names=['timestamp', 'action', 'data', 'package', 'scheme', 'type', 'user'])
-
-    if len(df) == 0:
-        return
-
-    drop_actions = [
-        'android.net.wifi.SCAN_RESULTS',
-        'android.bluetooth.device.action.FOUND',
-        'android.bluetooth.adapter.action.DISCOVERY_STARTED',
-        'android.bluetooth.adapter.action.DISCOVERY_FINISHED'
-    ]
-
-    df['timestamp'] = df['timestamp'].apply(lambda x: dt.strptime(x, '%d.%m.%Y_%H:%M:%S.%f'))
-
-    df = df[~df['action'].str.contains('|'.join(drop_actions))]
-    df = df.drop(['data', 'package', 'scheme', 'type'], axis=1)
-
-    df.index = pd.DatetimeIndex(df.timestamp)
-    df = df.sort_index()
-
-    df['events_count'] = 1
-    VALID_USER = VALID_USER = df.iloc[0]['user']
-    df['user'] = df['user'].apply(lambda x: 1 if x == VALID_USER else 0)
-
-    df = df.drop(['timestamp'], axis=1)
-
-    df.to_csv(dst_path_rolling)
-    df.to_csv(dst_path_sampling)
-
-
 def generate_features(src, dst, freq, window):
     for time_dir in os.listdir(src):
         dir = os.path.join(src, time_dir)
@@ -743,14 +711,6 @@ def generate_features(src, dst, freq, window):
 
                         print("\tGenerate BT: ", bt_path)
                         generate_bt_features(bt_path, bt_le, bt_rolling_out, bt_sampling_out, freq, window)
-
-                    if prefix == "broadcasts":
-                        broadcasts_path = os.path.join(src_user_path, prefix + postfix)
-                        broadcasts_sampling_out = os.path.join(out_user_sampling_path, "broadcasts" + postfix + ".csv")
-                        broadcasts_rolling_out = os.path.join(out_user_rolling_path, "broadcasts" + postfix + ".csv")
-
-                        print("\tGenerate BROADCASTS: ", broadcasts_path)
-                        generate_broadcast_features(broadcasts_path, broadcasts_rolling_out, broadcasts_sampling_out)
 
                     if prefix == "location":
                         location_path = os.path.join(src_user_path, prefix + postfix)
